@@ -1,4 +1,4 @@
-# Save as app.py
+
 import streamlit as st
 import cv2
 import torch
@@ -7,7 +7,7 @@ from torchvision import models, transforms
 from PIL import Image
 import pathlib
 
-# --- Reconstruct model from parts if needed ---
+# --- Function to reconstruct model from parts ---
 def merge_model_parts(output_file='emotion_model.pth', part_prefix='emotion_model.pth.part'):
     index = 1
     try:
@@ -25,23 +25,28 @@ def merge_model_parts(output_file='emotion_model.pth', part_prefix='emotion_mode
     except Exception as e:
         st.error(f"Error merging model parts: {e}")
 
-# --- Check and merge model ---
-if not pathlib.Path("emotion_model.pth").exists():
+# --- Check if model file exists ---
+model_path = "emotion_model.pth"
+if not pathlib.Path(model_path).exists():
     st.warning("Model file not found. Attempting to reconstruct from parts...")
     merge_model_parts()
 
-# --- Load Model ---
-@st.cache_resource
+if not pathlib.Path(model_path).exists():
+    st.error("Model still missing after reconstruction. Please upload all .part files.")
+    st.stop()
+
+# --- Load model ---
+@st.cache_resource(show_spinner=True)
 def load_model():
-    model = models.mobilenet_v2(pretrained=False)
-    model.classifier[1] = torch.nn.Linear(model.last_channel, 4)
-    model.load_state_dict(torch.load("emotion_model.pth", map_location='cpu'))
+    model = models.mobilenet_v2(weights=None)
+    model.classifier[1] = torch.nn.Linear(model.last_channel, 4)  # 4 emotion classes
+    model.load_state_dict(torch.load(model_path, map_location='cpu'))
     model.eval()
     return model
 
 model = load_model()
 
-# --- Labels and preprocessing ---
+# --- Preprocessing and labels ---
 emotion_labels = ['Angry', 'Happy', 'Sad', 'Neutral']
 transform = transforms.Compose([
     transforms.Resize((96, 96)),
@@ -49,82 +54,70 @@ transform = transforms.Compose([
     transforms.Normalize([0.485]*3, [0.229]*3)
 ])
 
-# --- Face Detection ---
+# --- Load Haar Cascade ---
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # --- Streamlit UI ---
-st.title("Emotion Detection from Webcam (PyTorch, No TensorFlow)")
-start_webcam = st.checkbox('Start Webcam')
+st.title("🧠 Real-time Emotion Detection via Webcam")
+run = st.checkbox("Start Webcam")
 
-frame_window = st.image([])
+FRAME_WINDOW = st.image([])
+
 motion_threshold = 800
 prev_gray = None
 cap = None
 
-# --- Webcam Logic ---
-try:
-    if start_webcam:
-        if cap is None:
-            cap = cv2.VideoCapture(0)
+if run:
+    cap = cv2.VideoCapture(0)
 
-        stop_webcam = False
+    while run:
+        ret, frame = cap.read()
+        if not ret:
+            st.warning("Failed to access webcam.")
+            break
 
-        while cap.isOpened() and not stop_webcam:
-            ret, frame = cap.read()
-            if not ret:
-                st.warning("Failed to capture frame")
-                break
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Anti-spoofing: motion detection
+        motion = False
+        if prev_gray is not None:
+            diff = cv2.absdiff(prev_gray, gray)
+            score = np.sum(diff)
+            if score > motion_threshold:
+                motion = True
+        prev_gray = gray
 
-            # Anti-spoof: motion detection
-            motion = False
-            if prev_gray is not None:
-                diff = cv2.absdiff(prev_gray, gray)
-                score = np.sum(diff)
-                if score > motion_threshold:
-                    motion = True
-            prev_gray = gray
+        # Face Detection
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
-            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        if len(faces) == 0:
+            cv2.putText(frame, "No face detected", (20, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        elif not motion:
+            cv2.putText(frame, "Spoof detected! No motion", (20, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        else:
+            for (x, y, w, h) in faces:
+                face_img = frame[y:y+h, x:x+w]
+                face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(face_img)
+                input_tensor = transform(pil_img).unsqueeze(0)
 
-            if len(faces) == 0:
-                cv2.putText(frame, "No face detected", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            elif not motion:
-                cv2.putText(frame, "Spoof detected! No motion", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            else:
-                for (x, y, w, h) in faces:
-                    face_img = frame[y:y+h, x:x+w]
-                    face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-                    pil_img = Image.fromarray(face_img)
-                    input_tensor = transform(pil_img).unsqueeze(0)
+                with torch.no_grad():
+                    outputs = model(input_tensor)
+                    _, predicted = torch.max(outputs, 1)
+                    emotion = emotion_labels[predicted.item()]
 
-                    with torch.no_grad():
-                        outputs = model(input_tensor)
-                        _, predicted = torch.max(outputs, 1)
-                        emotion = emotion_labels[predicted.item()]
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(frame, emotion, (x, y - 10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(frame, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        FRAME_WINDOW.image(frame)
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame_window.image(frame)
+    cap.release()
+    FRAME_WINDOW.image([])
 
-            # This will stop loop on user action outside loop
-            stop_webcam = not st.session_state.get("continue_stream", True)
+else:
+    st.info("Click the checkbox above to start the webcam.")
 
-        cap.release()
-        cap = None
-except Exception as e:
-    st.error(f"Error: {e}")
-finally:
-    if cap is not None:
-        cap.release()
-
-# --- Toggle to stop stream (must be outside loop to avoid key conflict) ---
-if start_webcam:
-    stop_button = st.button("Stop Webcam")
-    if stop_button:
-        st.session_state["continue_stream"] = False
-    else:
-        st.session_state["continue_stream"] = True
