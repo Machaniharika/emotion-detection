@@ -1,14 +1,14 @@
-
 import streamlit as st
 import cv2
 import torch
 import numpy as np
-from torchvision import models, transforms
+from torchvision import transforms
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 from PIL import Image
 import pathlib
 
 # --- Function to reconstruct model from parts ---
-def merge_model_parts(output_file='emotion_model.pth', part_prefix='emotion_model.pth.part'):
+def merge_model_parts(output_file='emotion_mobilenetv2.pth', part_prefix='emotion_mobilenetv2.pth.part'):
     index = 1
     try:
         with open(output_file, 'wb') as output:
@@ -26,7 +26,7 @@ def merge_model_parts(output_file='emotion_model.pth', part_prefix='emotion_mode
         st.error(f"Error merging model parts: {e}")
 
 # --- Check if model file exists ---
-model_path = "emotion_model.pth"
+model_path = "emotion_mobilenetv2.pth"
 if not pathlib.Path(model_path).exists():
     st.warning("Model file not found. Attempting to reconstruct from parts...")
     merge_model_parts()
@@ -36,22 +36,30 @@ if not pathlib.Path(model_path).exists():
     st.stop()
 
 # --- Load model ---
-@st.cache_resource(show_spinner=True)
+@st.cache_resource
 def load_model():
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = torch.nn.Linear(model.last_channel, 4)  # 4 emotion classes
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
-    model.eval()
-    return model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    weights = MobileNet_V2_Weights.DEFAULT
+    model = mobilenet_v2(weights=weights)
+    model.classifier[1] = torch.nn.Linear(model.last_channel, 4)
 
-model = load_model()
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+        model.eval()
+        return model, device
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+        raise e
+
+model, device = load_model()
 
 # --- Preprocessing and labels ---
 emotion_labels = ['Angry', 'Happy', 'Sad', 'Neutral']
 transform = transforms.Compose([
     transforms.Resize((96, 96)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485]*3, [0.229]*3)
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 # --- Load Haar Cascade ---
@@ -101,7 +109,7 @@ if run:
                 face_img = frame[y:y+h, x:x+w]
                 face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(face_img)
-                input_tensor = transform(pil_img).unsqueeze(0)
+                input_tensor = transform(pil_img).unsqueeze(0).to(device)
 
                 with torch.no_grad():
                     outputs = model(input_tensor)
@@ -120,4 +128,3 @@ if run:
 
 else:
     st.info("Click the checkbox above to start the webcam.")
-
