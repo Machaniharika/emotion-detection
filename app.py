@@ -58,15 +58,21 @@ run = st.checkbox("Start Webcam")
 FRAME_WINDOW = st.image([])
 motion_threshold = 800
 prev_gray = None
-cap = None
 
 if run:
-    cap = cv2.VideoCapture(0)
+    # Try multiple webcam indexes to ensure access
+    for cam_index in [0, 1, 2]:
+        cap = cv2.VideoCapture(cam_index)
+        if cap.isOpened():
+            break
+    else:
+        st.error("❌ Could not open any webcam (tried indexes 0, 1, 2).")
+        st.stop()
 
     while run:
         ret, frame = cap.read()
         if not ret:
-            st.warning("⚠️ Failed to access webcam.")
+            st.warning("⚠️ Failed to read frame from webcam.")
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -102,9 +108,10 @@ if run:
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
                     cv2.putText(frame, emotion, (x, y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                except:
+                except Exception as e:
                     cv2.putText(frame, "Face error", (x, y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    st.error(f"Face processing error: {e}")
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         FRAME_WINDOW.image(frame)
@@ -114,4 +121,22 @@ if run:
 
 else:
     st.info("👆 Click the checkbox above to start the webcam.")
+
+    # --- Browser-compatible fallback: camera input ---
+    st.subheader("📷 Browser Camera Snapshot (for deployed apps)")
+    image_data = st.camera_input("Take a picture using your webcam")
+
+    if image_data is not None:
+        st.success("✅ Image captured. Processing...")
+
+        img = Image.open(image_data).convert("L")  # Convert to grayscale
+        img = img.resize((48, 48))  # Match the SVM input format
+        input_vec = np.array(img).flatten().reshape(1, -1) / 255.0
+
+        try:
+            pred_idx = model.predict(input_vec)[0]
+            emotion = emotion_labels[pred_idx]
+            st.markdown(f"### 🧠 Predicted Emotion: **{emotion}**")
+        except Exception as e:
+            st.error(f"Prediction error: {e}")
 
