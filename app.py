@@ -10,8 +10,6 @@ emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
 
 # --- Function to reconstruct SVM model from parts ---
 def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pkl.part'):
-    if os.path.exists(output_file):
-        return  # Already exists
     index = 1
     try:
         with open(output_file, 'wb') as output:
@@ -23,26 +21,26 @@ def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pk
                     output.write(pf.read())
                     st.info(f"Merged: {part_file}")
                 index += 1
-        st.success(f"✅ Model reconstruction complete: {output_file}")
+        st.success("✅ Model reconstruction complete.")
     except Exception as e:
         st.error(f"❌ Error merging model parts: {e}")
 
-# --- Attempt to reconstruct model if missing ---
+# --- Ensure model file exists ---
 model_path = "emotion_svm.pkl"
 if not os.path.exists(model_path):
-    st.warning("⚠️ Model file not found. Attempting to reconstruct from parts...")
+    st.warning("⚠️ Model file not found. Attempting to reconstruct...")
     merge_model_parts()
 
 if not os.path.exists(model_path):
     st.error("❌ Model still missing after reconstruction. Please upload all .part files.")
     st.stop()
 
-# --- Load Haar Cascade for face detection ---
+# --- Load Haar Cascade for Face Detection ---
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # --- Load the trained SVM model ---
 @st.cache_resource
-def load_model(model_path=model_path):
+def load_model():
     try:
         model = joblib.load(model_path)
         st.success("✅ SVM model loaded successfully.")
@@ -62,11 +60,10 @@ motion_threshold = 800
 prev_gray = None
 
 if run:
-    # Try to open webcam from indexes 0,1,2
-    for cam_index in [0,1,2]:
+    # Try multiple webcam indexes to ensure access
+    for cam_index in [0, 1, 2]:
         cap = cv2.VideoCapture(cam_index)
         if cap.isOpened():
-            st.info(f"Using webcam index {cam_index}")
             break
     else:
         st.error("❌ Could not open any webcam (tried indexes 0, 1, 2).")
@@ -80,7 +77,7 @@ if run:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Motion detection for anti-spoofing
+        # Anti-spoofing: motion detection
         motion = False
         if prev_gray is not None:
             diff = cv2.absdiff(prev_gray, gray)
@@ -89,7 +86,7 @@ if run:
                 motion = True
         prev_gray = gray
 
-        # Face detection
+        # Face Detection
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
         if len(faces) == 0:
@@ -123,4 +120,5 @@ if run:
     FRAME_WINDOW.image([])
 
 else:
-    st.info("👆 Click the checkbox above to start the webcam.")
+    st.info("👆 Click the checkbox above to start the webcam for real-time emotion detection.")
+
