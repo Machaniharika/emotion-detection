@@ -8,12 +8,41 @@ import os
 # --- Emotion Labels ---
 emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
 
+# --- Function to reconstruct SVM model from parts ---
+def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pkl.part'):
+    if os.path.exists(output_file):
+        return  # Already exists
+    index = 1
+    try:
+        with open(output_file, 'wb') as output:
+            while True:
+                part_file = f"{part_prefix}{index}"
+                if not os.path.exists(part_file):
+                    break
+                with open(part_file, 'rb') as pf:
+                    output.write(pf.read())
+                    st.info(f"Merged: {part_file}")
+                index += 1
+        st.success(f"✅ Model reconstruction complete: {output_file}")
+    except Exception as e:
+        st.error(f"❌ Error merging model parts: {e}")
+
+# --- Attempt to reconstruct model if missing ---
+model_path = "emotion_svm.pkl"
+if not os.path.exists(model_path):
+    st.warning("⚠️ Model file not found. Attempting to reconstruct from parts...")
+    merge_model_parts()
+
+if not os.path.exists(model_path):
+    st.error("❌ Model still missing after reconstruction. Please upload all .part files.")
+    st.stop()
+
+# --- Load Haar Cascade for face detection ---
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
 # --- Load the trained SVM model ---
 @st.cache_resource
-def load_model(model_path="emotion_svm.pkl"):
-    if not os.path.exists(model_path):
-        st.error("❌ Model file not found. Please place 'emotion_svm.pkl' in the app folder.")
-        st.stop()
+def load_model(model_path=model_path):
     try:
         model = joblib.load(model_path)
         st.success("✅ SVM model loaded successfully.")
@@ -23,9 +52,6 @@ def load_model(model_path="emotion_svm.pkl"):
         st.stop()
 
 model = load_model()
-
-# --- Load Haar Cascade for face detection ---
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # --- Streamlit UI ---
 st.title("😊 Real-time Emotion Detection (SVM Model)")
@@ -98,5 +124,3 @@ if run:
 
 else:
     st.info("👆 Click the checkbox above to start the webcam.")
-
-
